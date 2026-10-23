@@ -3,7 +3,7 @@
 Download and preserve Roku TV themes, then build custom themes with your own
 wallpaper and colors. Command-line tools with an interactive terminal wizard.
 
-Created by **Teo Gabriel / [facil.wtf](https://facil.wtf)**.
+Created by **Teo Gabriel.
 
 ## Features
 
