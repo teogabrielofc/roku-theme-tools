@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roku-theme-tools"
+version = "0.2.0"
+description = "Download, preserve and customize Roku TV themes from XML URLs and mitmproxy captures."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "Teo Gabriel"}]
+dependencies = ["Pillow>=10.1"]
+keywords = ["roku", "themes", "wallpapers", "preservation", "mitmproxy"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Multimedia :: Graphics",
+]
+
+[project.scripts]
+roku-theme-dump = "dump_temas:main"
+roku-theme-create = "criar_tema:main"
+
+[tool.setuptools]
+py-modules = ["tema_common", "dump_temas", "criar_tema", "aplicar_template", "dump_ao_vivo", "rotear_roku"]
