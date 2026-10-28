@@ -1,6 +1,7 @@
-"""Leitura de dumps mitmproxy e extracao de temas. Apenas biblioteca padrao."""
+"""Read mitmproxy dumps and extract themes using only the standard library."""
 import gzip
 import hashlib
+import ipaddress
 import json
 import re
 import urllib.request
@@ -10,13 +11,31 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 
+def client_ip(value):
+    """Accept only one concrete IPv4/IPv6 address, never a wildcard or network."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise ValueError("Enter the TV's IPv4 or IPv6 address") from exc
+    if address.is_unspecified or address.is_multicast:
+        raise ValueError("The TV address must not be a wildcard or multicast address")
+    return str(address)
+
+
+def safe_relative(value):
+    """Validate a portable package path, including on Windows."""
+    return (isinstance(value, str) and bool(value) and not value.startswith("/")
+            and ".." not in value.split("/") and "\\" not in value
+            and ":" not in value and "\x00" not in value)
+
+
 def key(url):
     p = urlsplit(url)
     return urlunsplit((p.scheme, p.netloc, p.path, "", ""))
 
 
 def slug(name):
-    return re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-")[:70] or "tema"
+    return re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-")[:70] or "theme"
 
 
 def write_json(path, value):
@@ -35,14 +54,14 @@ def flows(path):
         c = b.index(b":", p)
         length = int(b[p:c]); start = c + 1; end = start + length
         if end >= len(b):
-            raise ValueError("Registro truncado no dump")
+            raise ValueError("Truncated record in flow dump")
         raw = b[start:end]; tag = chr(b[end])
         if tag in ("}", "]"):
             items = []; q = start
             while q < end:
                 item, q = parse(q); items.append(item)
             if q != end:
-                raise ValueError("Comprimento invalido")
+                raise ValueError("Invalid record length")
             value = dict(zip(items[::2], items[1::2])) if tag == "}" else items
         elif tag == ";": value = raw.decode("utf-8")
         elif tag == ",": value = raw
@@ -50,7 +69,7 @@ def flows(path):
         elif tag == "^": value = float(raw)
         elif tag == "!": value = raw == b"true"
         elif tag == "~": value = None
-        else: raise ValueError("Formato de registro desconhecido")
+        else: raise ValueError("Unknown record format")
         return value, end + 1
     pos = 0
     while pos < len(b):
@@ -83,7 +102,7 @@ def records(path):
             try: body = zlib.decompress(body)
             except zlib.error: body = zlib.decompress(body, -15)
         elif encoding and encoding != "identity":
-            raise ValueError(f"Compressao {encoding} nao suportada neste flow; use o coletor ao vivo")
+            raise ValueError(f"Unsupported flow compression {encoding}; use the live collector")
         yield url, body, headers.get("content-type", "application/octet-stream")
 
 
@@ -120,16 +139,16 @@ def pkg_refs(root):
         value = (element.text or "").strip()
         if value.startswith("pkg:/theme/"):
             relative = value[len("pkg:/theme/"):]
-            if (relative and ".." not in relative.split("/")
-                    and not relative.startswith("/") and "\\" not in relative and ":" not in relative):
-                result.add(relative)
+            if not safe_relative(relative):
+                raise ValueError("Unsafe theme asset path: " + relative)
+            result.add(relative)
     return sorted(result)
 
 
 def fetch(url, timeout=20):
     p = urlsplit(url)
     if p.scheme not in ("http", "https") or not p.hostname:
-        raise ValueError("Somente URLs HTTP/HTTPS")
+        raise ValueError("Only HTTP/HTTPS URLs are supported")
     request = urllib.request.Request(url, headers={"User-Agent": "RokuThemeTools/1.0", "Accept-Encoding": "identity"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         body = response.read()
@@ -141,19 +160,21 @@ def fetch(url, timeout=20):
 def save_theme(out, url, body, cache, entries, download=False):
     root = theme_xml(body)
     if root is None:
-        raise ValueError("Resposta nao e um XML de tema Roku")
-    name = root.findtext("name") or "Tema"
+        raise ValueError("Response is not a Roku theme XML document")
+    name = root.findtext("name") or "Theme"
     matches = [e for e in entries if e["name"].casefold() == name.casefold() or key(e["url"]) == key(url)]
     identity = hashlib.sha256(key(url).encode()).hexdigest()[:8]
     folder = Path(out) / "themes" / (slug(name) + "-" + identity)
+    refs = pkg_refs(root)
     assets = folder / "assets"; assets.mkdir(parents=True, exist_ok=True)
     xml_name = Path(urlsplit(url).path).name or "Theme.xml"
+    if not safe_relative(xml_name):
+        raise ValueError("Unsafe theme XML filename")
     (assets / xml_name).write_bytes(body)
     files = {xml_name: "assets/" + xml_name}
     missing = []; errors = []
     routes = {key(url): "assets/" + xml_name}
     for e in matches: routes[key(e["url"])] = "assets/" + xml_name
-    refs = pkg_refs(root)
     for rel in refs:
         asset_url = urljoin(url, rel)
         resource = cache.get(key(asset_url))

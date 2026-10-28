@@ -1,6 +1,7 @@
-"""Extrai temas de flows, captura ao vivo ou catalogos; baixa recursos opcionais."""
+"""Extract themes from flows, live captures or catalogs, and optionally download assets."""
 import argparse
 import json
+import sys
 from pathlib import Path
 from tema_common import (records, key, theme_xml, catalog_entries, read_json,
                          write_json, fetch, save_theme)
@@ -8,13 +9,13 @@ from tema_common import (records, key, theme_xml, catalog_entries, read_json,
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("inputs", nargs="*", help="Cole URLs XML ou caminhos de flows diretamente")
-    p.add_argument("--flows", nargs="+", default=[], help="Um ou mais dumps mitmproxy")
-    p.add_argument("--live", type=Path, help="Pasta criada por dump_ao_vivo.py")
-    p.add_argument("--catalog", nargs="+", default=[], help="Catalogos JSON salvos")
-    p.add_argument("--url", action="extend", nargs="+", default=[], help="URLs XML; baixa os recursos automaticamente")
-    p.add_argument("--download", action="store_true", help="Baixa temas do catalogo e recursos faltantes")
-    p.add_argument("--out", type=Path, default=Path("dump-temas"))
+    p.add_argument("inputs", nargs="*", help="XML URLs or flow file paths")
+    p.add_argument("--flows", nargs="+", default=[], help="One or more mitmproxy flow files")
+    p.add_argument("--live", type=Path, help="Directory created by dump_ao_vivo.py")
+    p.add_argument("--catalog", nargs="+", default=[], help="Saved JSON catalogs")
+    p.add_argument("--url", action="extend", nargs="+", default=[], help="XML URLs; referenced assets are downloaded automatically")
+    p.add_argument("--download", action="store_true", help="Download catalog themes and missing assets")
+    p.add_argument("--out", type=Path, default=Path("dump-themes"))
     a = p.parse_args(argv)
     for value in a.inputs:
         if value.lower().startswith(("http://", "https://")):
@@ -22,12 +23,14 @@ def main(argv=None):
         else:
             a.flows.append(value)
     if not (a.flows or a.live or a.catalog or a.url):
-        value = input("Cole a URL XML do tema ou arraste um arquivo flows: ").strip().strip('\"\'')
-        if not value: p.error("Informe uma URL XML ou captura")
+        if not sys.stdin.isatty():
+            p.error("Provide an XML URL or --flows; interactive input requires a terminal")
+        value = input("Paste a theme XML URL or drag a flow file here: ").strip().strip('\"\'')
+        if not value: p.error("Provide an XML URL or a capture")
         if value.lower().startswith(("http://", "https://")):
             a.url = [url.strip('\"\'') for url in value.split()]
             if not all(url.lower().startswith(("http://", "https://")) for url in a.url):
-                p.error("Cole URLs HTTP/HTTPS separadas por espaco")
+                p.error("Paste HTTP/HTTPS URLs separated by spaces")
         else:
             a.flows = [value]
     download_resources = a.download or bool(a.url)
@@ -40,7 +43,7 @@ def main(argv=None):
             try: catalogs.append(json.loads(body))
             except (ValueError, UnicodeError): pass
     for file in a.flows:
-        print("Lendo:", file)
+        print("Reading:", file)
         for record in records(file): add(*record)
     if a.live:
         for item in read_json(a.live / "index.json"):
@@ -55,28 +58,28 @@ def main(argv=None):
     for url in dict.fromkeys(urls):
         if key(url) in xmls: continue
         try:
-            print("Baixando XML:", url)
+            print("Downloading XML:", url)
             final_url, body, mime = fetch(url)
-            if theme_xml(body) is None: raise ValueError("Servidor nao retornou XML de tema")
+            if theme_xml(body) is None: raise ValueError("Server did not return a theme XML document")
             xmls[key(final_url)] = body
             if not any(key(e["url"]) == key(url) for e in entries):
-                entries.append({"name": theme_xml(body).findtext("name") or "Tema", "url": url, "category": "direct"})
+                entries.append({"name": theme_xml(body).findtext("name") or "Theme", "url": url, "category": "direct"})
         except Exception as exc: failures.append({"url": url, "error": str(exc)})
     results = []
     for url, body in xmls.items():
-        print("Extraindo XML e recursos:", url)
+        print("Extracting XML and assets:", url)
         folder, info = save_theme(a.out, url, body, cache, entries, download_resources)
         results.append({"name": info["name"], "category": info["category"],
                         "manifest": str(folder.relative_to(a.out) / "theme.json"),
                         "complete": info["complete"], "missing": len(info["missing"])})
-        print(f"{info['name']}: {len(info['files'])} arquivos; faltam {len(info['missing'])} -> {folder}")
+        print(f"{info['name']}: {len(info['files'])} files; {len(info['missing'])} missing -> {folder}")
     write_json(a.out / "catalog-index.json", entries)
     write_json(a.out / "report.json", {"themes": results, "download_errors": failures,
-        "note": "Sazonais dependem do catalogo enviado pelo servidor; captured/catalog nao implica tema normal."})
-    print(f"Pronto: {len(results)} tema(s) extraido(s), {len(entries)} entrada(s) de catalogo, {len(failures)} erro(s).")
+        "note": "Seasonal availability depends on the server catalog; captured/catalog does not mean a regular theme."})
+    print(f"Done: {len(results)} theme(s), {len(entries)} catalog entry/entries, {len(failures)} download error(s).")
     return 0 if results and not failures and all(t["complete"] for t in results) else 2
 
 
 if __name__ == "__main__":
     try: raise SystemExit(main())
-    except (OSError, ValueError) as exc: raise SystemExit("Erro: " + str(exc))
+    except (OSError, ValueError) as exc: raise SystemExit("Error: " + str(exc))

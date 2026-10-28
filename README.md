@@ -25,9 +25,12 @@ theme resources retain their respective ownership.
 - Pillow for theme creation.
 - mitmproxy separately installed for live collection or theme application.
 
-The dumper itself uses only Python's standard library. CLI help and some
-terminal messages are currently in Portuguese; English option aliases are
-available for theme creation.
+The dumper itself uses only Python's standard library. Help, prompts, errors,
+logs and generated instructions are in English. Existing Python script names
+and Portuguese creation-option aliases remain available for compatibility.
+
+**Start here:** [step-by-step guide](docs/GUIDE.md). See also
+[changes and migration notes](CHANGELOG.md).
 
 ## Install
 
@@ -45,7 +48,7 @@ python dump_temas.py --help
 python criar_tema.py --help
 ```
 
-On Windows, `py` can be used instead of `python`. `dump.cmd` and `criar.cmd`
+On Windows, `py` can be used instead of `python`. `dump.cmd` and `create.cmd` (or legacy `criar.cmd`)
 open the terminal workflows from the repository directory.
 
 ## Download directly from XML
@@ -64,14 +67,14 @@ Direct URL inputs automatically download referenced assets; `--download` is not
 required. Run `dump.cmd` or `roku-theme-dump` without arguments to paste a URL
 interactively. Example server URLs may change or stop working over time.
 
-Output is written to `dump-temas/themes/<name>-<id>/`:
+Output is written to `dump-themes/themes/<name>-<id>/`:
 
 | File | Purpose |
 | --- | --- |
 | `theme.json` | Theme metadata, URL aliases, local routes and missing resources |
 | `assets/` | XML and downloaded resources |
-| `dump-temas/catalog-index.json` | Discovered catalog entries |
-| `dump-temas/report.json` | Completeness and download errors |
+| `dump-themes/catalog-index.json` | Discovered catalog entries |
+| `dump-themes/report.json` | Completeness and download errors |
 
 The command exits with status `2` when there are incomplete results or download
 failures. Files already recovered are kept.
@@ -94,7 +97,7 @@ session can instead be collected live while the TV loads the theme.
 Use these addons with an existing working reverse-proxy setup:
 
 ```console
--s ./rotear_roku.py -s ./dump_ao_vivo.py --set temas_sazonais=true
+-s ./rotear_roku.py -s ./dump_ao_vivo.py --set route_client=YOUR_TV_IP --set theme_client=YOUR_TV_IP --set include_seasonal=true
 ```
 
 Run from the repository directory, or use absolute addon paths. Replace earlier
@@ -104,10 +107,11 @@ catalogs and resources, not request authentication headers.
 
 Open the theme selection screen on the TV. The collector removes `seasonal`
 from the catalog query's `exclude` parameter, preserving other query fields.
+Seasonal query rewriting is off unless `--set include_seasonal=true` is supplied.
 Then stop the proxy and run:
 
 ```console
-roku-theme-dump --live dump-ao-vivo --download --out my-dump
+roku-theme-dump --live live-themes --download --out my-dump
 ```
 
 Seasonal availability depends on the server, TV model, region, account and date.
@@ -115,10 +119,11 @@ This does not retrieve every seasonal theme ever released. Catalog groups
 identify seasonal/sponsored entries when that information is available;
 `catalog` or `captured` means the classification is not established.
 
-The default TV IP is `192.168.18.76`. For another device, set both:
+There is no default TV IP. Set both options to the address of your own TV
+(the empty defaults block routing and capture nothing):
 
 ```console
---set route_client=192.168.1.50 --set temas_client=192.168.1.50
+--set route_client=YOUR_TV_IP --set theme_client=YOUR_TV_IP
 ```
 
 Keep the DNS/routing and certificate setup that works for your TV. This project
@@ -130,10 +135,10 @@ First download or dump a complete base theme. Use its folder containing
 `theme.json`:
 
 ```console
-roku-theme-create --base "my-dump/themes/Daydream-<id>" --name "My Theme" --wallpaper "wallpaper.png" --accent "#3291FF" --background "#000000" --text "#FFFFFF" --out "my-theme"
+roku-theme-create --client YOUR_TV_IP --base "my-dump/themes/Daydream-<id>" --name "My Theme" --wallpaper "wallpaper.png" --accent "#3291FF" --background "#000000" --text "#FFFFFF" --out "my-theme"
 ```
 
-Or run `criar.cmd` and follow the prompts. This repository does not include a
+Or run `create.cmd` and follow the prompts. This repository does not include a
 pre-dumped base theme, so enter the path to your own complete dump.
 
 | Option | Effect |
@@ -143,7 +148,7 @@ pre-dumped base theme, so enter the path to your own complete dump.
 | `--accent` | Focus and divider color |
 | `--background` | Generated background and header color |
 | `--text` / `--texto` | Text colors exposed by the XML `FONTS` block |
-| `--client` | TV IP address |
+| `--client` | Required TV IPv4/IPv6 address; no built-in device address |
 | `--hide-ad` / `--ocultar-anuncio` | Transparent Google `/simgad/` sidebar image |
 | `--out` | New output directory; a ZIP is created next to it |
 
@@ -158,7 +163,7 @@ Extract the generated ZIP. Replace previous theme/routing addons in your working
 mitmweb command with:
 
 ```console
--s ./aplicar_tema.py
+-s ./apply_theme.py
 ```
 
 Run from the generated theme directory. Its addon includes hostname routing and
@@ -167,9 +172,10 @@ working setup. Route the relevant Roku services through the proxy for that TV.
 
 Switch to the default theme, then select the original base theme again. If the
 catalog is intercepted, it may appear under the new custom name. Cached catalogs
-may retain the old name. Look for `TEMA LOCAL` messages in the terminal.
+may retain the old name. Look for `LOCAL THEME` messages in the terminal.
 
-To restore normal behavior, select the default theme and stop the addon. Re-fetch
+To restore normal behavior, select the default theme, stop the addon and remove
+the per-TV DNS overrides you added. Re-fetch
 the original theme without the customization addon if needed.
 
 ## Tests
@@ -183,8 +189,10 @@ downloads, redirects, seasonal catalog parsing, missing assets, custom package
 generation and the generated addon. No live Roku account or TV is needed.
 
 The earlier theme substitution workflow was tested on a user's TV; that does
-not establish compatibility with every model or firmware. CI defines Windows
-and Linux checks; local validation was performed on Linux.
+not establish compatibility with every model or firmware. The included GitHub
+Actions workflow defines Windows and Linux checks; local validation was performed
+on Linux. Windows execution
+has not been verified locally.
 
 ## Contributing
 

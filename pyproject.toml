@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roku-theme-tools"
-version = "0.2.0"
+version = "0.3.0"
 description = "Download, preserve and customize Roku TV themes from XML URLs and mitmproxy captures."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,6 +17,9 @@ classifiers = [
   "Operating System :: OS Independent",
   "Topic :: Multimedia :: Graphics",
 ]
+
+[project.optional-dependencies]
+proxy = ["mitmproxy"]
 
 [project.scripts]
 roku-theme-dump = "dump_temas:main"

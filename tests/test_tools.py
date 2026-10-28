@@ -15,7 +15,10 @@ import zipfile
 from PIL import Image
 import criar_tema
 import dump_temas
-from tema_common import catalog_entries, pkg_refs, read_json, save_theme, theme_xml
+from tema_common import client_ip, catalog_entries, pkg_refs, read_json, save_theme, theme_xml
+
+EXCEPTIONS = types.ModuleType("mitmproxy.exceptions")
+EXCEPTIONS.OptionsError = ValueError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -88,7 +91,7 @@ class ToolsTest(unittest.TestCase):
 
     def test_interactive_urls(self):
         out = self.root / "dump"
-        with patch("builtins.input", return_value=self.url + "/regular.xml"):
+        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value=self.url + "/regular.xml"):
             self.assertEqual(self.dump(["--out", str(out)]), 0)
 
     def test_seasonal_catalog(self):
@@ -119,7 +122,9 @@ class ToolsTest(unittest.TestCase):
 
     def test_unsafe_asset_references_are_rejected(self):
         root = theme_xml(b'<theme><hdurl>pkg:/theme/../../escape.png</hdurl><hdurl>pkg:/theme/C:\\escape.png</hdurl><hdurl>pkg:/theme/safe.png</hdurl></theme>')
-        self.assertEqual(pkg_refs(root), ["safe.png"])
+        with self.assertRaisesRegex(ValueError, "Unsafe theme asset"):
+            pkg_refs(root)
+        self.assertEqual(pkg_refs(theme_xml(b'<theme><url>pkg:/theme/safe.png</url></theme>')), ["safe.png"])
 
     def test_creator_and_generated_addon(self):
         base, _ = save_theme(self.root / "bases", "http://cloudservices.roku.com/pkg/Theme.xml", xml(),
@@ -128,10 +133,13 @@ class ToolsTest(unittest.TestCase):
         out = self.root / "custom theme"
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(criar_tema.main(["--base", str(base), "--name", "Custom", "--wallpaper", str(wallpaper),
-                                             "--text", "#FFFFFF", "--hide-ad", "--out", str(out)]), 0)
+                                             "--text", "#FFFFFF", "--client", "192.0.2.50", "--hide-ad", "--out", str(out)]), 0)
         config = read_json(out / "config.json")
         self.assertEqual(config["name"], "Custom")
+        self.assertEqual(config["client"], "192.0.2.50")
         self.assertTrue(config["hide_google_ad"])
+        self.assertIn("LOCAL THEME", (out / "HOW-TO-APPLY.txt").read_text())
+        self.assertTrue((out / "transparent.webp").is_file())
         with zipfile.ZipFile(str(out) + ".zip") as z:
             self.assertIsNone(z.testzip())
         class Response:
@@ -142,32 +150,132 @@ class ToolsTest(unittest.TestCase):
             @text.setter
             def text(self, value): self.content = value.encode()
         module = types.ModuleType("mitmproxy")
-        module.ctx = types.SimpleNamespace(options=types.SimpleNamespace(custom_client="192.168.18.76"),
+        module.ctx = types.SimpleNamespace(options=types.SimpleNamespace(custom_client="192.0.2.50"),
                                             log=types.SimpleNamespace(info=lambda x: None, error=lambda x: None))
         module.http = types.SimpleNamespace(Response=types.SimpleNamespace(make=Response))
-        with patch.dict("sys.modules", {"mitmproxy": module}):
-            addon = runpy.run_path(str(out / "aplicar_tema.py"))["addons"][0]
+        with patch.dict("sys.modules", {"mitmproxy": module, "mitmproxy.exceptions": EXCEPTIONS}):
+            addon = runpy.run_path(str(out / "apply_theme.py"))["addons"][0]
             addon.load(types.SimpleNamespace(add_option=lambda *args: None))
             def flow(ip):
                 return types.SimpleNamespace(client_conn=types.SimpleNamespace(peername=(ip, 123), tls=False),
                     server_conn=types.SimpleNamespace(sni=None), metadata={}, response=None,
                     request=types.SimpleNamespace(host_header="cloudservices.roku.com", path=addon.prefix + config["xml_key"], headers={}))
-            good = flow("192.168.18.76"); addon.requestheaders(good)
+            good = flow("192.0.2.50"); addon.requestheaders(good)
             self.assertEqual(good.response.status_code, 200)
-            bad = flow("192.168.18.99"); addon.requestheaders(bad)
+            bad = flow("192.0.2.99"); addon.requestheaders(bad)
             self.assertEqual(bad.response.status_code, 403)
+            denied = flow("192.0.2.50")
+            denied.request.host_header = "roku.com.attacker.invalid"
+            addon.requestheaders(denied)
+            self.assertEqual(denied.response.status_code, 403)
+            module.ctx.options.custom_client = ""
+            empty = flow("192.0.2.50"); addon.requestheaders(empty)
+            self.assertEqual(empty.response.status_code, 403)
 
     def test_collector_includes_seasonal(self):
         module = types.ModuleType("mitmproxy")
-        module.ctx = types.SimpleNamespace(options=types.SimpleNamespace(temas_client="192.168.18.76", temas_sazonais=True))
-        with patch.dict("sys.modules", {"mitmproxy": module}):
+        module.ctx = types.SimpleNamespace(options=types.SimpleNamespace(theme_client="192.0.2.50", include_seasonal=True))
+        with patch.dict("sys.modules", {"mitmproxy": module, "mitmproxy.exceptions": EXCEPTIONS}):
             addon = runpy.run_path(str(ROOT / "dump_ao_vivo.py"))["addons"][0]
-            flow = types.SimpleNamespace(client_conn=types.SimpleNamespace(peername=("192.168.18.76", 1)),
+            flow = types.SimpleNamespace(client_conn=types.SimpleNamespace(peername=("192.0.2.50", 1)),
                 request=types.SimpleNamespace(host_header="themes-service.sr.roku.com", path="/themes-service/v1/dynamic?env=PROD&exclude=seasonal%2Cscreensaver", headers={}))
             addon.requestheaders(flow)
             self.assertNotIn("seasonal", flow.request.path)
             self.assertIn("screensaver", flow.request.path)
             self.assertIn("env=PROD", flow.request.path)
+
+    def base_theme(self):
+        base, _ = save_theme(self.root / "bases", "http://cloudservices.roku.com/pkg/Theme.xml", xml(),
+                            {"http://cloudservices.roku.com/pkg/Base/HD/background.png": (self.png, "image/png")}, [], False)
+        return base
+
+    def create_args(self, base, out):
+        return ["--base", str(base), "--client", "192.0.2.50", "--name", "Test", "--out", str(out)]
+
+    def assert_creator_rejected(self, args):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            criar_tema.main(args)
+        self.assertEqual(error.exception.code, 2)
+
+    def test_creator_requires_explicit_tv_and_validates_address(self):
+        self.assert_creator_rejected(["--name", "Test"])
+        for value in ("", "YOUR_TV_IP", "0.0.0.0", "::", "224.0.0.1", "192.0.2.0/24"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                client_ip(value)
+        self.assertEqual(client_ip("2001:db8::50"), "2001:db8::50")
+
+    def test_existing_zip_does_not_create_output(self):
+        base = self.base_theme(); out = self.root / "new-theme"
+        archive = Path(str(out) + ".zip"); archive.write_bytes(b"original")
+        self.assert_creator_rejected(self.create_args(base, out))
+        self.assertFalse(out.exists())
+        self.assertEqual(archive.read_bytes(), b"original")
+
+    def test_creator_rejects_unsafe_manifest_before_writing(self):
+        base = self.base_theme(); manifest = base / "theme.json"
+        original = read_json(manifest)
+        for bad in (str(base / "assets/Theme.xml"), "../outside.png", "C:/outside.png"):
+            with self.subTest(path=bad):
+                info = dict(original); info["files"] = {**original["files"], "extra.png": bad}
+                manifest.write_text(json.dumps(info))
+                out = self.root / "rejected"
+                self.assert_creator_rejected(self.create_args(base, out))
+                self.assertFalse(out.exists())
+
+    def test_unlisted_xml_and_missing_background_do_not_create_output(self):
+        base = self.base_theme(); manifest = base / "theme.json"; info = read_json(manifest)
+        xml_path = base / info["xml"]
+        xml_path.write_bytes(b"<theme><name>Unsupported</name></theme>")
+        out = self.root / "unsupported"
+        self.assert_creator_rejected(self.create_args(base, out))
+        self.assertFalse(out.exists())
+        info["xml"] = "../outside.xml"; manifest.write_text(json.dumps(info))
+        self.assert_creator_rejected(self.create_args(base, out))
+        self.assertFalse(out.exists())
+
+    def test_base_output_overlap_preserves_base(self):
+        base = self.base_theme(); manifest = (base / "theme.json").read_bytes()
+        self.assert_creator_rejected(self.create_args(base, base / "nested"))
+        self.assertFalse((base / "nested").exists())
+        self.assertEqual((base / "theme.json").read_bytes(), manifest)
+
+    def test_collector_default_is_empty_and_seasonal_is_opt_in(self):
+        module = types.ModuleType("mitmproxy")
+        module.ctx = types.SimpleNamespace(options=types.SimpleNamespace(theme_client="", include_seasonal=False))
+        with patch.dict("sys.modules", {"mitmproxy": module, "mitmproxy.exceptions": EXCEPTIONS}):
+            addon = runpy.run_path(str(ROOT / "dump_ao_vivo.py"))["addons"][0]
+            defaults = {}
+            addon.load(types.SimpleNamespace(add_option=lambda name, kind, default, help: defaults.update({name: default})))
+            self.assertEqual(defaults["theme_client"], "")
+            self.assertFalse(defaults["include_seasonal"])
+            path = "/themes-service/v1/dynamic?exclude=seasonal"
+            flow = types.SimpleNamespace(client_conn=types.SimpleNamespace(peername=("192.0.2.50", 1)),
+                request=types.SimpleNamespace(host_header="themes-service.sr.roku.com", path=path, headers={}))
+            self.assertFalse(addon.ours(flow))
+            module.ctx.options.theme_client = "192.0.2.50"
+            addon.requestheaders(flow)
+            self.assertEqual(flow.request.path, path)
+
+    def test_router_has_no_default_client(self):
+        module = types.ModuleType("mitmproxy")
+        module.ctx = types.SimpleNamespace(options=types.SimpleNamespace(route_client=""))
+        module.http = types.SimpleNamespace(Response=types.SimpleNamespace(
+            make=lambda status, body: types.SimpleNamespace(status_code=status)))
+        with patch.dict("sys.modules", {"mitmproxy": module, "mitmproxy.exceptions": EXCEPTIONS}):
+            addon = runpy.run_path(str(ROOT / "rotear_roku.py"))["addons"][0]
+            defaults = {}
+            addon.load(types.SimpleNamespace(add_option=lambda name, kind, default, help: defaults.update({name: default})))
+            self.assertEqual(defaults["route_client"], "")
+            flow = types.SimpleNamespace(client_conn=types.SimpleNamespace(peername=("192.0.2.50", 1)), response=None)
+            addon.requestheaders(flow)
+            self.assertEqual(flow.response.status_code, 403)
+            module.ctx.options.route_client = "0.0.0.0"
+            with self.assertRaises(ValueError): addon.configure({"route_client"})
+
+    def test_missing_dump_input_is_actionable_in_noninteractive_mode(self):
+        with patch("sys.stdin.isatty", return_value=False), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            dump_temas.main([])
+        self.assertEqual(error.exception.code, 2)
 
 
 if __name__ == "__main__": unittest.main()
