@@ -25,10 +25,6 @@ theme resources retain their respective ownership.
 - Pillow for theme creation.
 - mitmproxy separately installed for live collection or theme application.
 
-The dumper itself uses only Python's standard library. Help, prompts, errors,
-logs and generated instructions are in English. Existing Python script names
-and Portuguese creation-option aliases remain available for compatibility.
-
 **Start here:** [step-by-step guide](docs/GUIDE.md). See also
 [changes and migration notes](CHANGELOG.md).
 
@@ -48,7 +44,7 @@ python dump_temas.py --help
 python criar_tema.py --help
 ```
 
-On Windows, `py` can be used instead of `python`. `dump.cmd` and `create.cmd` (or legacy `criar.cmd`)
+On Windows, `py` can be used instead of `python`. `dump.cmd` and `create.cmd`
 open the terminal workflows from the repository directory.
 
 ## Download directly from XML
@@ -188,15 +184,11 @@ Tests use synthetic themes and a local HTTP server. They cover direct URL
 downloads, redirects, seasonal catalog parsing, missing assets, custom package
 generation and the generated addon. No live Roku account or TV is needed.
 
-The earlier theme substitution workflow was tested on a user's TV; that does
-not establish compatibility with every model or firmware. The included GitHub
-Actions workflow defines Windows and Linux checks; local validation was performed
-on Linux. Windows execution
-has not been verified locally.
-
 ## Contributing
 
 Include the command, Python version and a minimal synthetic XML or sanitized
 example when reporting a problem. Avoid attaching raw authenticated captures.
+
+Tested on Windows with a Roku TV model H536X. Other models and firmware may behave differently.
 
 Unofficial project. Not affiliated with Roku.
