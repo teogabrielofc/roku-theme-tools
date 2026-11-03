@@ -189,6 +189,6 @@ generation and the generated addon. No live Roku account or TV is needed.
 Include the command, Python version and a minimal synthetic XML or sanitized
 example when reporting a problem. Avoid attaching raw authenticated captures.
 
-Tested on Windows with a Roku TV model H536X. Other models and firmware may behave differently.
+Tested on Windows with a Roku TV model H536X / Philco TV PTV24G5YR2CP. Other models and firmware may behave differently.
 
 Unofficial project. Not affiliated with Roku.
